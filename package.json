@@ -1,0 +1,27 @@
+{
+  "name": "mixer-chat",
+  "version": "1.0.0-alpha",
+  "author": "Kieron Richardson <artdude543@hotmail.co.uk>",
+  "description": "Simplistic module to connect to the Mixer chat servers.",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "scripts": {
+    "build:ts": "rimraf lib dist && tsc",
+    "build": "npm run build:ts",
+    "test": "tsc && ava"
+  },
+  "dependencies": {
+    "ws": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^7.0.31",
+    "@types/ws": "^3.0.0",
+    "ava": "^0.19.1",
+    "rimraf": "^2.6.1",
+    "source-map-support": "^0.4.15",
+    "tslint": "^4.3.1",
+    "tslint-microsoft-contrib": "^4.0.0",
+    "typescript": "^2.3.4"
+  },
+  "license": "MIT"
+}
