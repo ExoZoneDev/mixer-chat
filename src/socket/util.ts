@@ -1,5 +1,5 @@
 import { TimeoutError } from '../errors';
-import { ISocketOptions } from './chat';
+import { ISocketOptions } from '../interfaces';
 import { ExponentialReconnectionPolicy } from './reconnection';
 
 /**
