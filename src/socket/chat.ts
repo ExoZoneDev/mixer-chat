@@ -2,8 +2,7 @@ import { EventEmitter } from 'events';
 import * as Socket from 'ws';
 
 import { AuthenticationFailedError, MessageParserError, NoMethodFound, TimeoutError } from '../errors';
-import { CallArgs, ICallOptions, ICloseEvent, ISpooledMethod } from '../interfaces';
-import { IPacket, ISocketOptions, IUserAuth } from '../interfaces';
+import * as Interfaces from '../interfaces';
 import { Reply } from './reply';
 import { getDefaults, timeout } from './util';
 
@@ -45,15 +44,15 @@ export enum SocketState {
 
 export class ChatSocket extends EventEmitter {
     protected socket: Socket;
-    protected options: ISocketOptions;
+    protected options: Interfaces.ISocketOptions;
     protected state: SocketState;
     protected endpointOffset: number;
-    protected queue: Map<string, ISpooledMethod> = new Map<string, ISpooledMethod>();
+    protected queue: Map<string, Interfaces.ISpooledMethod> = new Map<string, Interfaces.ISpooledMethod>();
     protected replies: { [id: number]: Reply; } = {};
     protected authPacket: [number, number, string];
     protected reconnectTimeout: NodeJS.Timer;
 
-    constructor(private endpoints: string[], options: ISocketOptions = {}) {
+    constructor(private endpoints: string[], options: Interfaces.ISocketOptions = {}) {
         super();
         this.setMaxListeners(Infinity);
         this.setOptions(options);
@@ -61,17 +60,17 @@ export class ChatSocket extends EventEmitter {
 
         this.on('message', (data: Socket.Data) => this.parsePacket(data));
 
-        this.on('WelcomeEvent', () => {
+        this.on('WelcomeEvent', (data: Interfaces.IWelcomeEvent) => {
             this.options.reconnectionPolicy.reset();
             if (this.state === SocketState.Reconnecting) {
                 this.emit('reconnected');
             }
             this.state = SocketState.Connected;
-            this.emit('ready'); // Emit a ready event for apps which want to know when the socket client is ready.
+            this.emit('ready', data); // Emit a ready event for apps which want to know when the socket client is ready.
             this.unSpool(); // Un-spool any events queue to send to the server.
         });
 
-        this.on('close', (evt: ICloseEvent) => {
+        this.on('close', (evt: Interfaces.ICloseEvent) => {
             // TODO: Should the socket close out completely with certain codes?
             if (this.state === SocketState.Refreshing) {
                 this.state = SocketState.Idle;
@@ -102,7 +101,7 @@ export class ChatSocket extends EventEmitter {
      *
      * Defaults are applied at this stage.
      */
-    public setOptions(options: ISocketOptions) {
+    public setOptions(options: Interfaces.ISocketOptions) {
         this.options = Object.assign({}, this.options || getDefaults(), options);
     }
 
@@ -147,9 +146,7 @@ export class ChatSocket extends EventEmitter {
             this.state = SocketState.Refreshing;
             return this;
         }
-        const wss = this.getAddress();
-
-        this.socket = new Socket(wss);
+        this.socket = new Socket(this.getAddress());
         this.state = SocketState.Connecting;
 
         // Handle error events.
@@ -165,7 +162,7 @@ export class ChatSocket extends EventEmitter {
         // Handle the standard events.
         this.socket.addEventListener('open', () => this.emit('open'));
         this.socket.addEventListener('message', evt => this.emit('message', evt.data));
-        this.socket.addEventListener('close', (evt: ICloseEvent) => this.emit('close', evt));
+        this.socket.addEventListener('close', (evt: Interfaces.ICloseEvent) => this.emit('close', evt));
 
         return this;
     }
@@ -211,7 +208,7 @@ export class ChatSocket extends EventEmitter {
      * Parses an incoming packet from the websocket.
      */
     public parsePacket(data: Socket.Data) {
-        let packet: IPacket<any>;
+        let packet: Interfaces.IPacket<any>;
         try {
             packet = JSON.parse(<string>data);
         } catch (err) {
@@ -244,7 +241,7 @@ export class ChatSocket extends EventEmitter {
     /**
      * Sends raw packet data to the server. It may not send immediately; if we aren't connected, it'll just be spooled up.
      */
-    public send(data: any, options: ICallOptions = {}): Promise<any> {
+    public send(data: any, options: Interfaces.ICallOptions = {}): Promise<any> {
         if (this.isConnected() || options.force) {
             this.socket.send(JSON.stringify(data));
             this.emit('debug', '>>', data);
@@ -264,7 +261,7 @@ export class ChatSocket extends EventEmitter {
      *
      * If you wish to join anonymously, userId and authKey can be omitted.
      */
-    public auth(channelId: number, userId: number = null, authKey: string = null): Promise<IUserAuth> {
+    public auth(channelId: number, userId: number = null, authKey: string = null): Promise<Interfaces.IUserAuth> {
         this.authPacket = [channelId, userId, authKey];
         if (this.isConnected()) {
             return this.call('auth', this.authPacket);
@@ -276,7 +273,7 @@ export class ChatSocket extends EventEmitter {
     /**
      * Runs a method on the socket. Returns a promise that is rejected or resolved upon reply.
      */
-    public call(method: string, args: CallArgs[] = [], options: ICallOptions = {}) {
+    public call(method: string, args: Interfaces.CallArgs[] = [], options: Interfaces.ICallOptions = {}) {
         const id = Math.floor(Math.random() * maxInt32);
         const replyPromise = new Promise((resolve, reject) => this.replies[id] = new Reply(resolve, reject));
 

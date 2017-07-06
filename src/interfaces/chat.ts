@@ -6,6 +6,10 @@ export interface IPacket<T> {
     data: T;
 }
 
+export interface IWelcomeEvent {
+    server: string;
+}
+
 export interface IUserAuth {
     authenticated: boolean;
     roles: string[];
