@@ -11,6 +11,8 @@ export function getDefaults(): ISocketOptions {
         callTimeout: 20 * 1000,
         reconnectionPolicy: new ExponentialReconnectionPolicy(),
         replyTimeout: 10000,
+        pingInterval: 15 * 1000,
+        pingTimeout: 5 * 1000,
     };
 }
 

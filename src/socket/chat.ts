@@ -50,6 +50,7 @@ export class ChatSocket extends EventEmitter {
     protected queue: Map<string, Interfaces.ISpooledMethod> = new Map<string, Interfaces.ISpooledMethod>();
     protected replies: { [id: number]: Reply; } = {};
     protected authPacket: [number, number, string];
+    protected pingTimeout: NodeJS.Timer;
     protected reconnectTimeout: NodeJS.Timer;
 
     constructor(private endpoints: string[], options: Interfaces.ISocketOptions = {}) {
@@ -66,6 +67,7 @@ export class ChatSocket extends EventEmitter {
                 this.emit('reconnected');
             }
             this.state = SocketState.Connected;
+            this.resetPingTimeout();
             this.emit('ready', data); // Emit a ready event for apps which want to know when the socket client is ready.
             this.unSpool(); // Un-spool any events queue to send to the server.
         });
@@ -165,6 +167,45 @@ export class ChatSocket extends EventEmitter {
         this.socket.addEventListener('close', (evt: Interfaces.ICloseEvent) => this.emit('close', evt));
 
         return this;
+    }
+
+    /**
+     * Start/Reset a ping timeout to send a ping frame to chat.
+     */
+    private resetPingTimeout() {
+        clearTimeout(this.pingTimeout);
+
+        this.pingTimeout = setTimeout(() => this.ping().catch(() => undefined), this.options.pingInterval);
+    }
+
+    /**
+     * Send a ping frame to chat.
+     */
+    private ping() {
+        if (!this.isConnected()) {
+            throw new TimeoutError();
+        }
+
+        const promise = Promise.race([
+            timeout(this.options.pingTimeout),
+            new Promise(resolve => {
+                this.socket.once('pong', resolve);
+            }),
+        ]);
+
+        // Ping the socket.
+        this.socket.ping();
+
+        return promise
+            .then(this.resetPingTimeout.bind(this))
+            .catch(err => {
+                if (!(err instanceof TimeoutError)) {
+                    throw err;
+                }
+
+                this.emit('error', err);
+                this.socket.close();
+            });
     }
 
     /**

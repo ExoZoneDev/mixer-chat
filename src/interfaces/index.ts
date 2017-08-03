@@ -42,4 +42,8 @@ export interface ISocketOptions {
     replyTimeout?: number;
     // Number of milliseconds to wait in .call() before we give up waiting
     callTimeout?: number;
+    // Number of milliseconds to wait before sending a ping frame to chat.
+    pingInterval?: number;
+    // Number of milliseconds to wait for getting a pong back from the chat server.
+    pingTimeout?: number;
 }
