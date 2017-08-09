@@ -57,22 +57,6 @@ export class ChatSocket extends EventEmitter {
         this.setOptions(options);
         this.endpointOffset = Math.floor(Math.random() * endpoints.length);
 
-        this.on('message', (data: Socket.Data) => {
-            this.resetPingTimeout();
-            this.parsePacket(data);
-        });
-
-        this.on('WelcomeEvent', (data: Interfaces.IWelcomeEvent) => {
-            this.options.reconnectionPolicy.reset();
-            if (this.state === SocketState.Reconnecting) {
-                this.emit('reconnected');
-            }
-            this.state = SocketState.Connected;
-            this.resetPingTimeout();
-            this.emit('ready', data); // Emit a ready event for apps which want to know when the socket client is ready.
-            this.unSpool(); // Un-spool any events queue to send to the server.
-        });
-
         this.on('close', (evt: Interfaces.ICloseEvent) => {
             // TODO: Should the socket close out completely with certain codes?
             if (this.state === SocketState.Refreshing) {
@@ -147,27 +131,54 @@ export class ChatSocket extends EventEmitter {
      * Open a new socket connection to a chat server.
      */
     public boot() {
+        const ws = this.socket = new Socket(this.getAddress());
         if (this.state === SocketState.Closing) {
             this.state = SocketState.Refreshing;
             return this;
         }
-        this.socket = new Socket(this.getAddress());
+        const whilstSameSocket = (fn: (...args: any[]) => void) => {
+            return (...args: any[]) => {
+                if (this.socket === ws) {
+                    fn.apply(this, args);
+                }
+            };
+        };
+
         this.state = SocketState.Connecting;
 
-        // Handle error events.
-        this.socket.on('error', err => {
+        // WebSocket connection has opened without any errors.
+        ws.on('open', whilstSameSocket(() => this.emit('open')));
+
+        // WebSocket got a message frame so handle the packet.
+        ws.on('message', whilstSameSocket((...args: any[]) => {
+            this.resetPingTimeout();
+            this.parsePacket.apply(this, args);
+        }));
+
+        // WebSocket got a close frame or we told it to close so handle that.
+        ws.on('close', whilstSameSocket(evt => this.emit('close', evt)));
+
+        // WebSocket threw an error so we should handle it.
+        ws.on('error', whilstSameSocket(err => {
             if (this.state === SocketState.Closing) {
                 return;
             }
 
             this.emit('error', err);
-            this.socket.close();
-        });
+            ws.close();
+        }));
 
-        // Handle the standard events.
-        this.socket.addEventListener('open', () => this.emit('open'));
-        this.socket.addEventListener('message', evt => this.emit('message', evt.data));
-        this.socket.addEventListener('close', (evt: Interfaces.ICloseEvent) => this.emit('close', evt));
+        // Chat server has acknowledged our connection.
+        this.once('WelcomeEvent', (data: Interfaces.IWelcomeEvent) => {
+            this.options.reconnectionPolicy.reset();
+            if (this.state === SocketState.Reconnecting) {
+                this.emit('reconnected');
+            }
+            this.state = SocketState.Connected;
+            this.resetPingTimeout();
+            this.emit('ready', data); // Emit a ready event for apps which want to know when the socket client is ready.
+            this.unSpool(); // Un-spool any events queue to send to the server.
+        });
 
         return this;
     }
@@ -184,7 +195,7 @@ export class ChatSocket extends EventEmitter {
     /**
      * Send a ping frame to chat.
      */
-    private ping() {
+    private async ping() {
         clearTimeout(this.pingTimeoutHandle);
 
         if (!this.isConnected()) {
@@ -215,24 +226,20 @@ export class ChatSocket extends EventEmitter {
      * Should be called on reconnection. Authenticates and sends follow-up packets if we have any.
      */
     private unSpool() {
-        // tslint:disable-next-line:no-var-self
-        let self = this;
-
         /**
          * Method to send all the stored packets to the chat server.
          */
-        function sendPackets() {
-            self.queue.forEach((packet, key) => {
-                self.send(packet.data, { force: true });
+        const sendPackets = () => {
+            this.queue.forEach((packet, key) => {
+                this.send(packet.data, { force: true })
+                    .catch(err => this.emit('error', err));
                 packet.resolve();
-                self.queue.delete(key);
+                this.queue.delete(key);
             });
 
-            self.state = SocketState.Connected;
-            self.emit('connected');
-
-            self = null;
-        }
+            this.state = SocketState.Connected;
+            this.emit('connected');
+        };
 
         // If we have an auth packet try to auth with that packet again.
         if (this.authPacket) {
@@ -251,7 +258,12 @@ export class ChatSocket extends EventEmitter {
     /**
      * Parses an incoming packet from the websocket.
      */
-    public parsePacket(data: Socket.Data) {
+    public parsePacket(data: string, flags?: { binary: boolean; }) {
+        if (flags && flags.binary) {
+            this.emit('error', new MessageParserError('Somehow got a binary packet?'));
+
+            return;
+        }
         let packet: Interfaces.IPacket<any>;
         try {
             packet = JSON.parse(<string>data);
