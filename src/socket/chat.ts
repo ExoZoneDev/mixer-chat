@@ -6,8 +6,6 @@ import * as Interfaces from '../interfaces';
 import { Reply } from './reply';
 import { getDefaults, timeout } from './util';
 
-const maxInt32 = 0xFFFFFFFF;
-
 /**
  * SocketState is used to record the status of the websocket connection.
  */
@@ -15,7 +13,7 @@ export enum SocketState {
     /**
      * A connection attempt has not been made yet.
      */
-    Idle = 1,
+    Idle,
     /**
      * A connection attempt is currently being made.
      */
@@ -45,12 +43,12 @@ export enum SocketState {
 export class ChatSocket extends EventEmitter {
     protected socket: Socket;
     protected options: Interfaces.ISocketOptions;
-    protected state: SocketState;
+    protected state: SocketState = SocketState.Idle;
     protected endpointOffset: number;
     protected queue: Map<string, Interfaces.ISpooledMethod> = new Map<string, Interfaces.ISpooledMethod>();
     protected replies: { [id: number]: Reply; } = {};
     protected authPacket: [number, number, string];
-    protected pingTimeout: NodeJS.Timer;
+    protected pingTimeoutHandle: NodeJS.Timer;
     protected reconnectTimeout: NodeJS.Timer;
 
     constructor(private endpoints: string[], options: Interfaces.ISocketOptions = {}) {
@@ -59,7 +57,10 @@ export class ChatSocket extends EventEmitter {
         this.setOptions(options);
         this.endpointOffset = Math.floor(Math.random() * endpoints.length);
 
-        this.on('message', (data: Socket.Data) => this.parsePacket(data));
+        this.on('message', (data: Socket.Data) => {
+            this.resetPingTimeout();
+            this.parsePacket(data);
+        });
 
         this.on('WelcomeEvent', (data: Interfaces.IWelcomeEvent) => {
             this.options.reconnectionPolicy.reset();
@@ -83,6 +84,8 @@ export class ChatSocket extends EventEmitter {
             if (this.state === SocketState.Closing) {
                 this.state = SocketState.Closed;
                 this.emit('closed');
+                clearTimeout(this.pingTimeoutHandle);
+                clearTimeout(this.reconnectTimeout);
                 return;
             }
 
@@ -173,24 +176,24 @@ export class ChatSocket extends EventEmitter {
      * Start/Reset a ping timeout to send a ping frame to chat.
      */
     private resetPingTimeout() {
-        clearTimeout(this.pingTimeout);
+        clearTimeout(this.pingTimeoutHandle);
 
-        this.pingTimeout = setTimeout(() => this.ping().catch(() => undefined), this.options.pingInterval);
+        this.pingTimeoutHandle = setTimeout(() => this.ping().catch(() => undefined), this.options.pingInterval);
     }
 
     /**
      * Send a ping frame to chat.
      */
     private ping() {
+        clearTimeout(this.pingTimeoutHandle);
+
         if (!this.isConnected()) {
             throw new TimeoutError();
         }
 
         const promise = Promise.race([
             timeout(this.options.pingTimeout),
-            new Promise(resolve => {
-                this.socket.once('pong', resolve);
-            }),
+            new Promise(resolve => this.socket.once('pong', resolve)),
         ]);
 
         // Ping the socket.
@@ -315,7 +318,7 @@ export class ChatSocket extends EventEmitter {
      * Runs a method on the socket. Returns a promise that is rejected or resolved upon reply.
      */
     public call(method: string, args: Interfaces.CallArgs[] = [], options: Interfaces.ICallOptions = {}) {
-        const id = Math.floor(Math.random() * maxInt32);
+        const id = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
         const replyPromise = new Promise((resolve, reject) => this.replies[id] = new Reply(resolve, reject));
 
         return this.send({ type: 'method', method, arguments: args, id }, options)
@@ -345,7 +348,8 @@ export class ChatSocket extends EventEmitter {
             this.socket.close();
             this.state = SocketState.Closing;
         } else {
-            clearTimeout(null);
+            clearTimeout(this.reconnectTimeout);
+            clearTimeout(this.pingTimeoutHandle);
             this.state = SocketState.Closed;
         }
     }
