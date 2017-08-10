@@ -151,7 +151,6 @@ export class ChatSocket extends EventEmitter {
 
         // WebSocket got a message frame so handle the packet.
         ws.on('message', whilstSameSocket((...args: any[]) => {
-            this.resetPingTimeout();
             this.parsePacket.apply(this, args);
         }));
 
